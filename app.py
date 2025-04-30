@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 import os
 from flask_dance.contrib.google import make_google_blueprint, google
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -100,6 +101,7 @@ def admin_required(f):
     return decorated_function
 
 
+#checkpoint 1
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     
@@ -250,6 +252,7 @@ def clear_session():
     session.clear()
     return redirect(url_for('home'))
 
+#checkpoint-1
 @app.route('/select-doctor', methods=['GET', 'POST'])
 @login_required
 
@@ -331,6 +334,7 @@ def confirm_appointment():
     
     flash('Appointment confirmed successfully!', 'success')
     return redirect(url_for('my_appointments'))
+#checkpoint 2
 
 @app.route('/my-appointments')
 @login_required
@@ -360,115 +364,197 @@ def cancel_appointment():
         flash('Invalid appointment or permission denied', 'error')
         
     return redirect(url_for('my_appointments'))
-##changed
+
 @app.route('/doctor/dashboard')
 @login_required
 def doctor_dashboard():
+
+
     today = datetime.now().date()
-
+    
     today_appointments = Appointment.query.filter_by(
-        doctor_id=current_user.id, appointment_date=today, status='Confirmed'
+        doctor_id=current_user.id,
+        appointment_date=today,
+        status='Confirmed'
     ).all()
-
+    
     upcoming_appointments = Appointment.query.filter(
         Appointment.doctor_id == current_user.id,
         Appointment.appointment_date > today,
         Appointment.status == 'Confirmed'
     ).order_by(Appointment.appointment_date).all()
-
-    first_day, last_day = get_month_range(today)
+    
+    first_day_of_month = datetime(today.year, today.month, 1).date()
+    last_day_of_month = (datetime(today.year, today.month + 1, 1) - timedelta(days=1)).date() if today.month < 12 else datetime(today.year + 1, 1, 1).date() - timedelta(days=1)
     
     monthly_appointments = Appointment.query.filter(
         Appointment.doctor_id == current_user.id,
-        Appointment.appointment_date.between(first_day, last_day),
+        Appointment.appointment_date >= first_day_of_month,
+        Appointment.appointment_date <= last_day_of_month,
         Appointment.status == 'Confirmed'
     ).count()
-
+    
     monthly_earnings = current_user.fees * monthly_appointments
     
-    return render_template('doctor_dashboard.html', doctor=current_user, 
-                           today_appointments=today_appointments, 
-                           upcoming_appointments=upcoming_appointments, 
-                           monthly_earnings=monthly_earnings)
+    return render_template('doctor_dashboard.html',
+                          doctor=current_user,
+                          today_appointments=today_appointments,
+                          upcoming_appointments=upcoming_appointments,
+                          monthly_earnings=monthly_earnings)
 
-# ===================== Error Handlers =====================
+
 @app.errorhandler(404)
 def page_not_found(e):
+   
     return render_template('404.html'), 404
 
-@app.errorhandler(500)
-def internal_server_error(e):
-    return render_template('500.html'), 500
-
-# ===================== Profile =====================
 @app.route('/profile')
 @login_required
 def profile():
+    
     appointments = Appointment.query.filter_by(patient_id=current_user.id).all()
-    return render_template('profile.html', appointments=appointments, current_user=current_user)
+    
+    return render_template('profile.html', 
+                         appointments=appointments,
+                         current_user=current_user)
 
-# ===================== About Page =====================
+@app.errorhandler(500)
+def internal_server_error(e):
+    
+    return render_template('500.html'), 500
+
 @app.route('/about')
 def about():
+    
     return render_template('about.html')
 
-# ===================== Admin: Add Doctor =====================
+
+
 @app.route('/admin/add-doctor', methods=['GET', 'POST'])
 @admin_required
 def add_doctor():
+    
     if request.method == 'POST':
-        new_doctor_id = generate_doctor_id()
+      
+        last_doctor = Doctor.query.order_by(Doctor.id.desc()).first()
+        new_doctor_id = f"DOC{(last_doctor.id + 1) if last_doctor else 1}"
+        
         doctor = Doctor(
             doctor_id=new_doctor_id,
-            name=request.form['name'],
-            specialization=request.form['specialization'],
-            experience=int(request.form['experience']),
-            city=request.form['city'],
-            fees=float(request.form['fees']),
-            image=request.form.get('image', '/static/images/default-doctor.jpg'),
-            password_hash=generate_password_hash(request.form['password'])
+            name=request.form.get('name'),
+            specialization=request.form.get('specialization'),
+            experience=int(request.form.get('experience')),
+            city=request.form.get('city'),
+            fees=float(request.form.get('fees')),
+            image=request.form.get('image', '/static/images/doctor1.jpg'),
+            password_hash=generate_password_hash(request.form.get('password'))
         )
-
+        
         db.session.add(doctor)
         db.session.commit()
-        flash('Doctor added successfully!', 'success')
+        flash('Doctor added successfully', 'success')
         return redirect(url_for('admin_dashboard'))
-
     return render_template('add_doctor.html')
 
-# ===================== Admin: Delete Doctor =====================
 @app.route('/admin/delete-doctor/<int:doctor_id>', methods=['POST'])
 @admin_required
 def delete_doctor(doctor_id):
+    
     doctor = Doctor.query.get_or_404(doctor_id)
     
     Appointment.query.filter_by(doctor_id=doctor.id).delete()
+    
     db.session.delete(doctor)
     db.session.commit()
-    
-    flash('Doctor deleted successfully!', 'success')
+    flash('Doctor deleted successfully', 'success')
     return redirect(url_for('admin_dashboard'))
 
-# ===================== Helper Functions =====================
-def get_month_range(today):
-    """Returns first and last day of the current month."""
-    first_day = datetime(today.year, today.month, 1).date()
-    last_day = (datetime(today.year, today.month + 1, 1) - timedelta(days=1)).date() if today.month < 12 else datetime(today.year + 1, 1, 1).date() - timedelta(days=1)
-    return first_day, last_day
-
-def generate_doctor_id():
-    """Generates a unique doctor ID."""
-    last_doctor = Doctor.query.order_by(Doctor.id.desc()).first()
-    return f"DOC{(last_doctor.id + 1) if last_doctor else 1}"
-
 def init_db():
-    """Initializes the database and ensures an admin exists."""
     with app.app_context():
         db.create_all()
+        
         if Admin.query.count() == 0:
-            admin = Admin(username='admin', email='admin@doccure.com', password_hash=generate_password_hash('admin123'))
+            admin = Admin(
+                username='admin',
+                email='admin@doccure.com',
+                password_hash=generate_password_hash('admin123')
+            )
             db.session.add(admin)
             db.session.commit()
+
+def add_more_doctors():
+    
+    with app.app_context():
+        
+        specialization_map = {
+            'Heart Disease': 'Cardiology',
+            'Bone & Joint Problems': 'Orthopedics',
+            'Neurological Issues': 'Neurology',
+            'Skin Problems': 'Dermatology',
+            'ENT Issues': 'ENT',
+            'Eye Problems': 'Ophthalmology'
+        }
+        
+    
+        cities = ['Mumbai', 'Delhi', 'Bangalore', 'Chennai', 'Kolkata']
+        
+        first_names = ['Aarav', 'Aditi', 'Arjun', 'Diya', 'Ishaan', 'Kavya', 'Neha', 'Rohan', 'Sanya', 'Vikram']
+        last_names = ['Patel', 'Sharma', 'Singh', 'Gupta', 'Kumar', 'Reddy', 'Joshi', 'Malhotra', 'Kapoor', 'Verma']
+        
+       
+        highest_id = 0
+        doctors = Doctor.query.all()
+        for doctor in doctors:
+            try:
+                
+                doc_id = int(doctor.doctor_id[3:])
+                if doc_id > highest_id:
+                    highest_id = doc_id
+            except:
+                pass
+        
+        if highest_id == 0:
+            highest_id = 1000  
+        
+        doctor_id = highest_id + 1
+        doctors_added = 0
+        
+        
+        for city in cities:
+            for illness, specialization in specialization_map.items():
+                
+                existing_count = Doctor.query.filter_by(
+                    specialization=specialization,
+                    city=city
+                ).count()
+                
+               
+                doctors_to_add = max(0, 2 - existing_count)
+                
+                for i in range(doctors_to_add):
+                    experience = 5 + (doctor_id % 20)  
+                    fees = 500 + (doctor_id % 15) * 100  
+                    
+                    doctor_id_str = f'DOC{doctor_id}'
+                    first_name = first_names[doctor_id % len(first_names)]
+                    last_name = last_names[doctor_id % len(last_names)]
+                    doctor = Doctor(
+                        doctor_id=doctor_id_str,
+                        name=f'Dr. {first_name} {last_name}',
+                        specialization=specialization,
+                        experience=experience,
+                        city=city,
+                        fees=fees,
+                        image=f'/static/images/doctor{1 + (doctor_id % 10)}.jpg',
+                        password_hash=generate_password_hash('doctor123')
+                    )
+                    db.session.add(doctor)
+                    doctor_id += 1
+                    doctors_added += 1
+        
+        db.session.commit()
+
+            
 
 if __name__ == '__main__':
     add_more_doctors()
