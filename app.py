@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 import os
 from flask_dance.contrib.google import make_google_blueprint, google
+from dotenv import load_dotenv
 
 load_dotenv()
 
